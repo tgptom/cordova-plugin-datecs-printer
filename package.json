@@ -10,7 +10,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/giorgiofellipe/cordova-plugin-datecs-printer"
+    "url": "https://github.com/tgptom/cordova-plugin-datecs-printer"
   },
   "keywords": [
     "cordova",
