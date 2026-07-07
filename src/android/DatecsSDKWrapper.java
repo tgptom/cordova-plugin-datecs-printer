@@ -27,7 +27,10 @@ import android.app.Activity;
 import android.app.ProgressDialog;
 import android.widget.Toast;
 import android.util.Log;
+import android.Manifest;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Bundle;
 import android.bluetooth.BluetoothAdapter;
@@ -114,6 +117,7 @@ public class DatecsSDKWrapper {
         this.errorCode.put(20, DatecsUtil.getStringFromStringResource(app, "failed_to_initialize"));
         this.errorCode.put(21, DatecsUtil.getStringFromStringResource(app, "err_write"));
         this.errorCode.put(22, DatecsUtil.getStringFromStringResource(app, "err_print_qrcode"));
+        this.errorCode.put(23, DatecsUtil.getStringFromStringResource(app, "err_bt_connect_permission"));
     }
 
     private JSONObject getErrorByCode(int code) {
@@ -135,6 +139,28 @@ public class DatecsSDKWrapper {
         return json;
     }
 
+    protected JSONObject getBluetoothPermissionDeniedError() {
+        return this.getErrorByCode(23);
+    }
+
+    private boolean hasBluetoothConnectPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            return true;
+        }
+
+        Activity activity = mCordova.getActivity();
+        return activity != null && activity.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private boolean ensureBluetoothConnectPermission(CallbackContext callbackContext) {
+        if (hasBluetoothConnectPermission()) {
+            return true;
+        }
+
+        callbackContext.error(this.getBluetoothPermissionDeniedError());
+        return false;
+    }
+
     /**
      * Busca todos os dispositivos Bluetooth pareados com o device
      *
@@ -143,6 +169,10 @@ public class DatecsSDKWrapper {
     protected void getBluetoothPairedDevices(CallbackContext callbackContext) {
         BluetoothAdapter mBluetoothAdapter = null;
         try {
+            if (!ensureBluetoothConnectPermission(callbackContext)) {
+                return;
+            }
+
             mBluetoothAdapter = BluetoothAdapter.getDefaultAdapter();
             if (mBluetoothAdapter == null) {
                 callbackContext.error(this.getErrorByCode(1));
@@ -225,6 +255,10 @@ public class DatecsSDKWrapper {
      * @param callbackContext
      */
     protected void connect(CallbackContext callbackContext) {
+        if (!ensureBluetoothConnectPermission(callbackContext)) {
+            return;
+        }
+
         mConnectCallbackContext = callbackContext;
         closeActiveConnections();
         if (BluetoothAdapter.checkBluetoothAddress(mAddress)) {
