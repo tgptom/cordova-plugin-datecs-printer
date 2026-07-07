@@ -2,12 +2,15 @@
 <plugin xmlns="http://apache.org/cordova/ns/plugins/1.0"
         xmlns:android="http://schemas.android.com/apk/res/android"
         id="cordova-plugin-datecs-printer"
-        version="0.11.0">
+        version="0.12.0">
 
     <name>DatecsPrinter</name>
     <description>Cordova Datecs Mobile Bluetooth Printer Plugin</description>
     <license>Apache 2.0</license>
     <keywords>cordova, bluetooth, printer, datecs</keywords>
+    <engines>
+        <engine name="cordova-android" version=">=15.0.0" />
+    </engines>
 
     <js-module src="www/printer.js" name="DatecsPrinter">
         <clobbers target="DatecsPrinter" />
@@ -15,7 +18,7 @@
 
     <!-- android -->
     <platform name="android">
-        <framework src="androidx.legacy:legacy-support-v4:+" value="gradle" />
+        <framework src="androidx.localbroadcastmanager:localbroadcastmanager:1.1.0" value="gradle" />
 
         <config-file target="res/xml/config.xml" parent="/*">
             <feature name="DatecsPrinter">
@@ -24,8 +27,9 @@
         </config-file>
 
         <config-file target="AndroidManifest.xml" parent="/*">
-            <uses-permission android:name="android.permission.BLUETOOTH" />
-            <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+            <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+            <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+            <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
             <uses-permission android:name="android.permission.READ_PHONE_STATE" />
         </config-file>
 
@@ -68,6 +72,7 @@
             <string name="printer_disconnected">Printer disconnected</string>
             <string name="err_write">Could not write these bytes to this printer</string>
             <string name="err_print_qrcode">Error printing QRcode</string>
+            <string name="err_bt_connect_permission">Bluetooth permission denied</string>
         </config-file>
     </platform>
 </plugin>

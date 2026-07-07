@@ -7,9 +7,15 @@ import org.apache.cordova.CordovaWebView;
 import org.json.JSONObject;
 import org.json.JSONArray;
 import org.json.JSONException;
+import android.Manifest;
+import android.content.pm.PackageManager;
+import android.os.Build;
 
 public class DatecsPrinter extends CordovaPlugin {
+	private static final int REQUEST_BLUETOOTH_CONNECT_PERMISSION = 1001;
 	private DatecsSDKWrapper printer;
+	private Option pendingPermissionOption;
+	private CallbackContext pendingPermissionCallbackContext;
 
 	private enum Option {
 		listBluetoothDevices,
@@ -53,11 +59,15 @@ public class DatecsPrinter extends CordovaPlugin {
 		}
 		switch (option) {
 			case listBluetoothDevices:
-				printer.getBluetoothPairedDevices(callbackContext);
+				if (ensureBluetoothPermission(option, callbackContext)) {
+					printer.getBluetoothPairedDevices(callbackContext);
+				}
 				break;
 			case connect:
 				printer.setAddress(args.getString(0));
-				printer.connect(callbackContext);
+				if (ensureBluetoothPermission(option, callbackContext)) {
+					printer.connect(callbackContext);
+				}
 				break;
 			case disconnect:
 				try {
@@ -156,5 +166,52 @@ public class DatecsPrinter extends CordovaPlugin {
 			  break;
 		}
 		return true;
+	}
+
+	private boolean ensureBluetoothPermission(Option option, CallbackContext callbackContext) {
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) {
+			return true;
+		}
+
+		pendingPermissionOption = option;
+		pendingPermissionCallbackContext = callbackContext;
+		requestPermission(this, REQUEST_BLUETOOTH_CONNECT_PERMISSION, Manifest.permission.BLUETOOTH_CONNECT);
+		return false;
+	}
+
+	@Override
+	public void onRequestPermissionResult(int requestCode, String[] permissions, int[] grantResults) throws JSONException {
+		if (requestCode != REQUEST_BLUETOOTH_CONNECT_PERMISSION) {
+			super.onRequestPermissionResult(requestCode, permissions, grantResults);
+			return;
+		}
+
+		CallbackContext callbackContext = pendingPermissionCallbackContext;
+		Option option = pendingPermissionOption;
+		pendingPermissionCallbackContext = null;
+		pendingPermissionOption = null;
+
+		boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+		if (!granted) {
+			if (callbackContext != null) {
+				callbackContext.error(printer.getBluetoothPermissionDeniedError());
+			}
+			return;
+		}
+
+		if (callbackContext == null || option == null) {
+			return;
+		}
+
+		switch (option) {
+			case listBluetoothDevices:
+				printer.getBluetoothPairedDevices(callbackContext);
+				break;
+			case connect:
+				printer.connect(callbackContext);
+				break;
+			default:
+				break;
+		}
 	}
 }
