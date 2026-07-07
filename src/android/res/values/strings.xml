@@ -27,4 +27,5 @@
   <string name="printer_connected">Printer connected</string>
   <string name="printer_disconnected">Printer disconnected</string>
   <string name="err_print_qrcode">Error printing QRcode</string>
+  <string name="err_bt_connect_permission">Bluetooth permission denied</string>
 </resources>
