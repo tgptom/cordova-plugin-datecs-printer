@@ -169,13 +169,13 @@ public class DatecsPrinter extends CordovaPlugin {
 	}
 
 	private boolean ensureBluetoothPermission(Option option, CallbackContext callbackContext) {
-		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) {
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || cordova.hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) {
 			return true;
 		}
 
 		pendingPermissionOption = option;
 		pendingPermissionCallbackContext = callbackContext;
-		requestPermission(this, REQUEST_BLUETOOTH_CONNECT_PERMISSION, Manifest.permission.BLUETOOTH_CONNECT);
+		cordova.requestPermission(this, REQUEST_BLUETOOTH_CONNECT_PERMISSION, Manifest.permission.BLUETOOTH_CONNECT);
 		return false;
 	}
 
