@@ -1,5 +1,3 @@
-## ⚠️ This plugin is not being actively maintained. Any help is welcome.
-
 # cordova-plugin-datecs-printer (Android only)
 
 The first thing that you must know is that the plugin is available through this variable `window.DatecsPrinter`.
@@ -26,7 +24,7 @@ _(every function accept at least two parameters, and they're the last ones: onSu
 
 On Android 12 (API 31) and newer, `listBluetoothDevices()` requests `BLUETOOTH_CONNECT`, and `connect(address)` requests both `BLUETOOTH_CONNECT` and `BLUETOOTH_SCAN` as Nearby Devices runtime permissions. The plugin uses `BLUETOOTH_SCAN` only to safely cancel Bluetooth discovery before connecting to an already paired printer, and declares it with `neverForLocation`. If either permission is denied, the plugin returns the existing Bluetooth permission error through the callback instead of crashing the app.
 
-Plugin status/error messages support Simplified Chinese through `zh-Hans` and Traditional Chinese through `zh-Hant`. The shared Traditional Chinese translations use Hong Kong terminology.
+Plugin status/error messages support Simplified Chinese through `zh-Hans` and Traditional Chinese through `zh-Hant`.
 
 ### Reported Working Printer Models
 
