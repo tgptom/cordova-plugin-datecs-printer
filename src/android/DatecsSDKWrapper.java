@@ -20,8 +20,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.net.Socket;
 import java.net.UnknownHostException;
-import java.lang.reflect.Method;
-
 import android.app.Application;
 import android.app.Activity;
 import android.app.ProgressDialog;
@@ -228,26 +226,20 @@ public class DatecsSDKWrapper {
                 JSONArray json = new JSONArray();
                 for (BluetoothDevice device : pairedDevices) {
                     Hashtable map = new Hashtable();
-                    int deviceType = 0;
-                    try {
-                        Method method = device.getClass().getMethod("getType");
-                        if (method != null) {
-                            deviceType = (Integer) method.invoke(device);
-                        }
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    }
+                    int deviceType = device.getType();
                     map.put("type", deviceType);
                     map.put("address", device.getAddress());
                     map.put("name", device.getName());
                     String deviceAlias = device.getName();
-                    try {
-                        Method method = device.getClass().getMethod("getAliasName");
-                        if (method != null) {
-                            deviceAlias = (String) method.invoke(device);
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        try {
+                            String alias = device.getAlias();
+                            if (alias != null && !alias.isEmpty()) {
+                                deviceAlias = alias;
+                            }
+                        } catch (SecurityException e) {
+                            Log.w(LOG_TAG, "Bluetooth permission denied while getting device alias");
                         }
-                    } catch (Exception e) {
-                        e.printStackTrace();
                     }
                     map.put("aliasName", deviceAlias);
                     JSONObject jObj = new JSONObject(map);
@@ -371,18 +363,40 @@ public class DatecsSDKWrapper {
                     }
 
                     try {
-                        mBluetoothSocket = createBluetoothSocket(device, uuid, callbackContext);
+                        mBluetoothSocket = device.createRfcommSocketToServiceRecord(uuid);
                         Thread.sleep(50);
                         mBluetoothSocket.connect();
                         in = mBluetoothSocket.getInputStream();
                         out = mBluetoothSocket.getOutputStream();
                     } catch (IOException e) {
-                        //fallback
-                        mBluetoothSocket = (BluetoothSocket) device.getClass().getMethod("createRfcommSocket", new Class[] {int.class}).invoke(device, 1);
-                        Thread.sleep(50);
-                        mBluetoothSocket.connect();
-                        in = mBluetoothSocket.getInputStream();
-                        out = mBluetoothSocket.getOutputStream();
+                        //fallback: close the failed socket before retrying
+                        if (mBluetoothSocket != null) {
+                            try { mBluetoothSocket.close(); } catch (IOException ignored) {}
+                            mBluetoothSocket = null;
+                        }
+                        try {
+                            mBluetoothSocket = device.createInsecureRfcommSocketToServiceRecord(uuid);
+                            Thread.sleep(50);
+                            mBluetoothSocket.connect();
+                            in = mBluetoothSocket.getInputStream();
+                            out = mBluetoothSocket.getOutputStream();
+                        } catch (IOException e2) {
+                            if (mBluetoothSocket != null) {
+                                try { mBluetoothSocket.close(); } catch (IOException ignored) {}
+                                mBluetoothSocket = null;
+                            }
+                            Log.e(LOG_TAG, "Both RFCOMM connection attempts failed for " + address, e2);
+                            callbackContext.error(sdk.getErrorByCode(18, e2));
+                            return;
+                        } catch (SecurityException ex) {
+                            if (mBluetoothSocket != null) {
+                                try { mBluetoothSocket.close(); } catch (IOException ignored) {}
+                                mBluetoothSocket = null;
+                            }
+                            Log.e(LOG_TAG, "Bluetooth permission denied while connecting (insecure)", ex);
+                            callbackContext.error(sdk.getBluetoothPermissionDeniedError());
+                            return;
+                        }
                     } catch (SecurityException ex) {
                         Log.e(LOG_TAG, "Bluetooth permission denied while connecting", ex);
                         callbackContext.error(sdk.getBluetoothPermissionDeniedError());
@@ -413,28 +427,6 @@ public class DatecsSDKWrapper {
                 }
             }
         }, DatecsUtil.getStringFromStringResource(app, "printer"), DatecsUtil.getStringFromStringResource(app, "connecting"));
-    }
-
-    /**
-     * Cria um socket Bluetooth
-     *
-     * @param device
-     * @param uuid
-     * @param callbackContext
-     * @return BluetoothSocket
-     * @throws IOException
-     */
-    private BluetoothSocket createBluetoothSocket(BluetoothDevice device, UUID uuid, final CallbackContext callbackContext) throws IOException {
-        try {
-            Method method = device.getClass().getMethod("createRfcommSocketToServiceRecord", new Class[] { UUID.class });
-            return (BluetoothSocket) method.invoke(device, uuid);
-        } catch (Exception e) {
-            e.printStackTrace();
-            sendStatusUpdate(false);
-            callbackContext.error(this.getErrorByCode(19));
-            showError(DatecsUtil.getStringFromStringResource(app, "failed_to_comm") + ": " + e.getMessage(), false);
-        }
-        return device.createRfcommSocketToServiceRecord(uuid);
     }
 
     /**
