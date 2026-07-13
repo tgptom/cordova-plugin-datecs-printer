@@ -359,27 +359,25 @@ public class DatecsSDKWrapper {
                 UUID uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
                 InputStream in = null;
                 OutputStream out = null;
-                BluetoothDevice device;
-
                 if (adapter == null) {
                     callbackContext.error(sdk.getErrorByCode(1));
                     return;
                 }
 
                 try {
-                    device = adapter.getRemoteDevice(address);
+                    BluetoothDevice device = adapter.getRemoteDevice(address);
                     if (!cancelDiscoverySafely(adapter, callbackContext)) {
                         return;
                     }
 
-                    mBluetoothSocket = createBluetoothSocket(device, uuid, callbackContext);
-                    Thread.sleep(50);
-                    mBluetoothSocket.connect();
-                    in = mBluetoothSocket.getInputStream();
-                    out = mBluetoothSocket.getOutputStream();
-                } catch (IOException e) {
-                    //fallback
                     try {
+                        mBluetoothSocket = createBluetoothSocket(device, uuid, callbackContext);
+                        Thread.sleep(50);
+                        mBluetoothSocket.connect();
+                        in = mBluetoothSocket.getInputStream();
+                        out = mBluetoothSocket.getOutputStream();
+                    } catch (IOException e) {
+                        //fallback
                         mBluetoothSocket = (BluetoothSocket) device.getClass().getMethod("createRfcommSocket", new Class[] {int.class}).invoke(device, 1);
                         Thread.sleep(50);
                         mBluetoothSocket.connect();
