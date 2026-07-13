@@ -44,9 +44,15 @@ import com.datecs.api.printer.ProtocolAdapter;
 
 public class DatecsSDKWrapper {
     private static final String LOG_TAG = "BluetoothPrinter";
+    private static final UUID SPP_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
+    private static final int RFCOMM_PRE_CONNECT_DELAY_MS = 50;
+    private static final int RFCOMM_FALLBACK_DELAY_MS = 400;
+    private static final int RFCOMM_RETRY_DELAY_MS = 700;
+    private static final int RFCOMM_MAX_CONNECT_ATTEMPTS = 2;
     private Printer mPrinter;
     private ProtocolAdapter mProtocolAdapter;
     private BluetoothSocket mBluetoothSocket;
+    private BluetoothSocket mConnectingBluetoothSocket;
     private boolean mRestart;
     private String mAddress;
     private CallbackContext mConnectCallbackContext;
@@ -55,6 +61,25 @@ public class DatecsSDKWrapper {
     private CordovaInterface mCordova;
     private CordovaWebView mWebView;
     private final Application app;
+    private final Object mConnectionLock = new Object();
+    private int mConnectionAttemptId;
+    private CallbackContext mPendingConnectionCallbackContext;
+
+    private static final class BluetoothConnectionResult {
+        private final InputStream inputStream;
+        private final OutputStream outputStream;
+
+        private BluetoothConnectionResult(InputStream inputStream, OutputStream outputStream) {
+            this.inputStream = inputStream;
+            this.outputStream = outputStream;
+        }
+    }
+
+    private static final class ConnectAbortedException extends Exception {
+        private ConnectAbortedException() {
+            super("Connection attempt was cancelled");
+        }
+    }
 
     /**
      * Interface de eventos da Impressora
@@ -295,7 +320,7 @@ public class DatecsSDKWrapper {
         mConnectCallbackContext = callbackContext;
         closeActiveConnections();
         if (BluetoothAdapter.checkBluetoothAddress(mAddress)) {
-            establishBluetoothConnection(mAddress, callbackContext);
+            establishBluetoothConnection(mAddress, callbackContext, beginConnectionAttempt(callbackContext));
         }
     }
 
@@ -303,8 +328,12 @@ public class DatecsSDKWrapper {
      * Encerra todas as conexões com impressoras e dispositivos Bluetooth ativas
      */
     public synchronized void closeActiveConnections() {
+        CallbackContext cancelledCallbackContext = cancelPendingConnectionAttempt();
         closePrinterConnection();
         closeBluetoothConnection();
+        if (cancelledCallbackContext != null) {
+            cancelledCallbackContext.error(this.getErrorByCode(18));
+        }
     }
 
     /**
@@ -313,10 +342,12 @@ public class DatecsSDKWrapper {
     private synchronized void closePrinterConnection() {
         if (mPrinter != null) {
             mPrinter.close();
+            mPrinter = null;
         }
 
         if (mProtocolAdapter != null) {
             mProtocolAdapter.close();
+            mProtocolAdapter = null;
         }
     }
 
@@ -324,15 +355,18 @@ public class DatecsSDKWrapper {
      * Finaliza o socket Bluetooth e encerra todas as conexões
      */
     private synchronized void closeBluetoothConnection() {
-        BluetoothSocket socket = mBluetoothSocket;
-        mBluetoothSocket = null;
-        if (socket != null) {
-            try {
-                Thread.sleep(50);
-                socket.close();
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
+        BluetoothSocket socket;
+        BluetoothSocket connectingSocket;
+        synchronized (mConnectionLock) {
+            socket = mBluetoothSocket;
+            connectingSocket = mConnectingBluetoothSocket;
+            mBluetoothSocket = null;
+            mConnectingBluetoothSocket = null;
+        }
+
+        closeSocketQuietly(socket);
+        if (connectingSocket != socket) {
+            closeSocketQuietly(connectingSocket);
         }
     }
 
@@ -342,87 +376,68 @@ public class DatecsSDKWrapper {
      * @param address
      * @param callbackContext
      */
-    private void establishBluetoothConnection(final String address, final CallbackContext callbackContext) {
+    private void establishBluetoothConnection(final String address, final CallbackContext callbackContext, final int connectionAttemptId) {
         final DatecsSDKWrapper sdk = this;
         runJob(new Runnable() {
             @Override
             public void run() {
                 BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
-                UUID uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
-                InputStream in = null;
-                OutputStream out = null;
                 if (adapter == null) {
-                    callbackContext.error(sdk.getErrorByCode(1));
+                    completeConnectionError(connectionAttemptId, callbackContext, sdk.getErrorByCode(1));
                     return;
                 }
 
                 try {
                     BluetoothDevice device = adapter.getRemoteDevice(address);
                     if (!cancelDiscoverySafely(adapter, callbackContext)) {
+                        clearPendingConnectionAttempt(connectionAttemptId, callbackContext);
                         return;
                     }
 
                     try {
-                        mBluetoothSocket = device.createRfcommSocketToServiceRecord(uuid);
-                        Thread.sleep(50);
-                        mBluetoothSocket.connect();
-                        in = mBluetoothSocket.getInputStream();
-                        out = mBluetoothSocket.getOutputStream();
-                    } catch (IOException e) {
-                        //fallback: close the failed socket before retrying
-                        if (mBluetoothSocket != null) {
-                            try { mBluetoothSocket.close(); } catch (IOException ignored) {}
-                            mBluetoothSocket = null;
+                        BluetoothConnectionResult connectionResult = connectBluetoothSocket(device, address, callbackContext, connectionAttemptId);
+                        if (connectionResult == null) {
+                            return;
                         }
+
                         try {
-                            mBluetoothSocket = device.createInsecureRfcommSocketToServiceRecord(uuid);
-                            Thread.sleep(50);
-                            mBluetoothSocket.connect();
-                            in = mBluetoothSocket.getInputStream();
-                            out = mBluetoothSocket.getOutputStream();
-                        } catch (IOException e2) {
-                            if (mBluetoothSocket != null) {
-                                try { mBluetoothSocket.close(); } catch (IOException ignored) {}
-                                mBluetoothSocket = null;
-                            }
-                            Log.e(LOG_TAG, "Both RFCOMM connection attempts failed for " + address, e2);
-                            callbackContext.error(sdk.getErrorByCode(18, e2));
-                            return;
-                        } catch (SecurityException ex) {
-                            if (mBluetoothSocket != null) {
-                                try { mBluetoothSocket.close(); } catch (IOException ignored) {}
-                                mBluetoothSocket = null;
-                            }
-                            Log.e(LOG_TAG, "Bluetooth permission denied while connecting (insecure)", ex);
-                            callbackContext.error(sdk.getBluetoothPermissionDeniedError());
+                            initializePrinter(connectionResult.inputStream, connectionResult.outputStream, connectionAttemptId);
+                        } catch (IOException initializationException) {
+                            initializationException.printStackTrace();
+                            closePrinterConnection();
+                            closeBluetoothConnection();
+                            completeConnectionError(connectionAttemptId, callbackContext, sdk.getErrorByCode(20));
                             return;
                         }
+
+                        if (completeConnectionSuccess(connectionAttemptId, callbackContext)) {
+                            showToast(DatecsUtil.getStringFromStringResource(app, "printer_connected"));
+                            sendStatusUpdate(true);
+                        }
+                        return;
                     } catch (SecurityException ex) {
                         Log.e(LOG_TAG, "Bluetooth permission denied while connecting", ex);
-                        callbackContext.error(sdk.getBluetoothPermissionDeniedError());
+                        completeConnectionError(connectionAttemptId, callbackContext, sdk.getBluetoothPermissionDeniedError());
+                        return;
+                    } catch (InterruptedException ex) {
+                        Thread.currentThread().interrupt();
+                        closeActiveConnections();
+                        completeConnectionError(connectionAttemptId, callbackContext, sdk.getErrorByCode(18, ex));
+                        return;
+                    } catch (ConnectAbortedException ex) {
                         return;
                     } catch (Exception ex) {
                         ex.printStackTrace();
-                        callbackContext.error(sdk.getErrorByCode(18, ex));
+                        completeConnectionError(connectionAttemptId, callbackContext, sdk.getErrorByCode(18, ex));
                         return;
                     }
                 } catch (SecurityException e) {
                     Log.e(LOG_TAG, "Bluetooth permission denied while connecting", e);
-                    callbackContext.error(sdk.getBluetoothPermissionDeniedError());
+                    completeConnectionError(connectionAttemptId, callbackContext, sdk.getBluetoothPermissionDeniedError());
                     return;
                 } catch (Exception e) {
                     e.printStackTrace();
-                    callbackContext.error(sdk.getErrorByCode(18, e));
-                    return;
-                }
-
-                try {
-                    initializePrinter(in, out, callbackContext);
-                    showToast(DatecsUtil.getStringFromStringResource(app, "printer_connected"));
-                    sendStatusUpdate(true);
-                } catch (IOException e) {
-                    e.printStackTrace();
-                    callbackContext.error(sdk.getErrorByCode(20));
+                    completeConnectionError(connectionAttemptId, callbackContext, sdk.getErrorByCode(18, e));
                     return;
                 }
             }
@@ -433,29 +448,233 @@ public class DatecsSDKWrapper {
      * Inicializa a troca de dados com a impressora
      * @param inputStream
      * @param outputStream
-     * @param callbackContext
+     * @param connectionAttemptId
      * @throws IOException
      */
-    protected void initializePrinter(InputStream inputStream, OutputStream outputStream, CallbackContext callbackContext) throws IOException {
-        mProtocolAdapter = new ProtocolAdapter(inputStream, outputStream);
-        if (mProtocolAdapter.isProtocolEnabled()) {
-            mProtocolAdapter.setPrinterListener(mChannelListener);
-            
-            final ProtocolAdapter.Channel channel = mProtocolAdapter.getChannel(ProtocolAdapter.CHANNEL_PRINTER);
-            
-            mPrinter = new Printer(channel.getInputStream(), channel.getOutputStream());
+    protected void initializePrinter(InputStream inputStream, OutputStream outputStream, int connectionAttemptId) throws IOException, ConnectAbortedException {
+        ProtocolAdapter protocolAdapter = new ProtocolAdapter(inputStream, outputStream);
+        Printer printer;
+        if (protocolAdapter.isProtocolEnabled()) {
+            protocolAdapter.setPrinterListener(mChannelListener);
+
+            final ProtocolAdapter.Channel channel = protocolAdapter.getChannel(ProtocolAdapter.CHANNEL_PRINTER);
+
+            printer = new Printer(channel.getInputStream(), channel.getOutputStream());
         } else {
-            mPrinter = new Printer(mProtocolAdapter.getRawInputStream(), mProtocolAdapter.getRawOutputStream());
+            printer = new Printer(protocolAdapter.getRawInputStream(), protocolAdapter.getRawOutputStream());
         }
 
-
-        mPrinter.setConnectionListener(new Printer.ConnectionListener() {
+        printer.setConnectionListener(new Printer.ConnectionListener() {
             @Override
             public void onDisconnect() {
                 sendStatusUpdate(false);
             }
         });
+
+        synchronized (mConnectionLock) {
+            if (!isConnectionAttemptActiveLocked(connectionAttemptId)) {
+                printer.close();
+                protocolAdapter.close();
+                throw new ConnectAbortedException();
+            }
+            mProtocolAdapter = protocolAdapter;
+            mPrinter = printer;
+        }
+    }
+
+    private int beginConnectionAttempt(CallbackContext callbackContext) {
+        synchronized (mConnectionLock) {
+            mConnectionAttemptId++;
+            mPendingConnectionCallbackContext = callbackContext;
+            return mConnectionAttemptId;
+        }
+    }
+
+    private CallbackContext cancelPendingConnectionAttempt() {
+        synchronized (mConnectionLock) {
+            CallbackContext callbackContext = mPendingConnectionCallbackContext;
+            mConnectionAttemptId++;
+            mPendingConnectionCallbackContext = null;
+            return callbackContext;
+        }
+    }
+
+    private void clearPendingConnectionAttempt(int connectionAttemptId, CallbackContext callbackContext) {
+        synchronized (mConnectionLock) {
+            if (isConnectionAttemptActiveForCallbackLocked(connectionAttemptId, callbackContext)) {
+                mPendingConnectionCallbackContext = null;
+            }
+        }
+    }
+
+    private boolean completeConnectionSuccess(int connectionAttemptId, CallbackContext callbackContext) {
+        synchronized (mConnectionLock) {
+            if (!isConnectionAttemptActiveForCallbackLocked(connectionAttemptId, callbackContext)) {
+                return false;
+            }
+            mPendingConnectionCallbackContext = null;
+        }
         callbackContext.success();
+        return true;
+    }
+
+    private boolean completeConnectionError(int connectionAttemptId, CallbackContext callbackContext, JSONObject error) {
+        synchronized (mConnectionLock) {
+            if (!isConnectionAttemptActiveForCallbackLocked(connectionAttemptId, callbackContext)) {
+                return false;
+            }
+            mPendingConnectionCallbackContext = null;
+        }
+        callbackContext.error(error);
+        return true;
+    }
+
+    private boolean isConnectionAttemptActive(int connectionAttemptId) {
+        synchronized (mConnectionLock) {
+            return isConnectionAttemptActiveLocked(connectionAttemptId);
+        }
+    }
+
+    private boolean isConnectionAttemptActiveLocked(int connectionAttemptId) {
+        return mConnectionAttemptId == connectionAttemptId && mPendingConnectionCallbackContext != null;
+    }
+
+    private boolean isConnectionAttemptActiveForCallbackLocked(int connectionAttemptId, CallbackContext callbackContext) {
+        return isConnectionAttemptActiveLocked(connectionAttemptId) && mPendingConnectionCallbackContext == callbackContext;
+    }
+
+    private BluetoothConnectionResult connectBluetoothSocket(BluetoothDevice device, String address, CallbackContext callbackContext, int connectionAttemptId) throws IOException, InterruptedException, ConnectAbortedException {
+        IOException lastFailure = null;
+
+        for (int attempt = 0; attempt < RFCOMM_MAX_CONNECT_ATTEMPTS; attempt++) {
+            if (attempt > 0) {
+                waitForBluetoothStack(connectionAttemptId, RFCOMM_RETRY_DELAY_MS);
+            }
+
+            try {
+                return openBluetoothSocket(device, connectionAttemptId, false);
+            } catch (IOException secureFailure) {
+                lastFailure = secureFailure;
+                Log.w(LOG_TAG, "Secure RFCOMM connection failed for " + address + ", attempting insecure fallback", secureFailure);
+            }
+
+            // Android's Bluetooth stack may need a short pause after a failed RFCOMM close before reusing the slot.
+            waitForBluetoothStack(connectionAttemptId, RFCOMM_FALLBACK_DELAY_MS);
+
+            try {
+                return openBluetoothSocket(device, connectionAttemptId, true);
+            } catch (IOException insecureFailure) {
+                lastFailure = insecureFailure;
+                if (attempt + 1 >= RFCOMM_MAX_CONNECT_ATTEMPTS || !isTransientRfcommFailure(insecureFailure)) {
+                    break;
+                }
+                Log.w(LOG_TAG, "Transient RFCOMM failure for " + address + ", retrying Bluetooth connection", insecureFailure);
+            }
+        }
+
+        Log.e(LOG_TAG, "Both RFCOMM connection attempts failed for " + address, lastFailure);
+        completeConnectionError(connectionAttemptId, callbackContext, getErrorByCode(18, lastFailure));
+        return null;
+    }
+
+    private BluetoothConnectionResult openBluetoothSocket(BluetoothDevice device, int connectionAttemptId, boolean insecure) throws IOException, InterruptedException, ConnectAbortedException {
+        BluetoothSocket candidateSocket = insecure
+                ? device.createInsecureRfcommSocketToServiceRecord(SPP_UUID)
+                : device.createRfcommSocketToServiceRecord(SPP_UUID);
+        try {
+            registerConnectingSocket(connectionAttemptId, candidateSocket);
+            waitForBluetoothStack(connectionAttemptId, RFCOMM_PRE_CONNECT_DELAY_MS);
+            candidateSocket.connect();
+            InputStream inputStream = candidateSocket.getInputStream();
+            OutputStream outputStream = candidateSocket.getOutputStream();
+            promoteConnectedSocket(connectionAttemptId, candidateSocket);
+            return new BluetoothConnectionResult(inputStream, outputStream);
+        } catch (IOException e) {
+            clearTrackedSocket(candidateSocket);
+            closeSocketQuietly(candidateSocket);
+            throw e;
+        } catch (InterruptedException e) {
+            clearTrackedSocket(candidateSocket);
+            closeSocketQuietly(candidateSocket);
+            throw e;
+        } catch (ConnectAbortedException e) {
+            clearTrackedSocket(candidateSocket);
+            closeSocketQuietly(candidateSocket);
+            throw e;
+        } catch (RuntimeException e) {
+            clearTrackedSocket(candidateSocket);
+            closeSocketQuietly(candidateSocket);
+            throw e;
+        }
+    }
+
+    private void registerConnectingSocket(int connectionAttemptId, BluetoothSocket socket) throws ConnectAbortedException {
+        synchronized (mConnectionLock) {
+            if (!isConnectionAttemptActiveLocked(connectionAttemptId)) {
+                throw new ConnectAbortedException();
+            }
+            mConnectingBluetoothSocket = socket;
+        }
+    }
+
+    private void promoteConnectedSocket(int connectionAttemptId, BluetoothSocket socket) throws ConnectAbortedException {
+        synchronized (mConnectionLock) {
+            if (!isConnectionAttemptActiveLocked(connectionAttemptId)) {
+                throw new ConnectAbortedException();
+            }
+            if (mConnectingBluetoothSocket == socket) {
+                mConnectingBluetoothSocket = null;
+            }
+            mBluetoothSocket = socket;
+        }
+    }
+
+    private void clearTrackedSocket(BluetoothSocket socket) {
+        synchronized (mConnectionLock) {
+            if (mConnectingBluetoothSocket == socket) {
+                mConnectingBluetoothSocket = null;
+            }
+            if (mBluetoothSocket == socket) {
+                mBluetoothSocket = null;
+            }
+        }
+    }
+
+    private void waitForBluetoothStack(int connectionAttemptId, int delayMs) throws InterruptedException, ConnectAbortedException {
+        if (!isConnectionAttemptActive(connectionAttemptId)) {
+            throw new ConnectAbortedException();
+        }
+        Thread.sleep(delayMs);
+        if (!isConnectionAttemptActive(connectionAttemptId)) {
+            throw new ConnectAbortedException();
+        }
+    }
+
+    private boolean isTransientRfcommFailure(IOException exception) {
+        String message = exception.getMessage();
+        if (message == null) {
+            return true;
+        }
+
+        String normalizedMessage = message.toLowerCase();
+        return normalizedMessage.contains("read failed")
+                || normalizedMessage.contains("socket might closed or timeout")
+                || normalizedMessage.contains("connection reset")
+                || normalizedMessage.contains("software caused connection abort")
+                || normalizedMessage.contains("try again")
+                || normalizedMessage.contains("busy");
+    }
+
+    private void closeSocketQuietly(BluetoothSocket socket) {
+        if (socket == null) {
+            return;
+        }
+
+        try {
+            socket.close();
+        } catch (IOException e) {
+            Log.w(LOG_TAG, "Failed to close Bluetooth socket cleanly", e);
+        }
     }
 
     /**
