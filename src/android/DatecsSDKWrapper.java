@@ -143,13 +143,25 @@ public class DatecsSDKWrapper {
         return this.getErrorByCode(23);
     }
 
+    private boolean hasBluetoothPermission(String permission) {
+        Activity activity = mCordova.getActivity();
+        return activity != null && activity.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED;
+    }
+
     private boolean hasBluetoothConnectPermission() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
             return true;
         }
 
-        Activity activity = mCordova.getActivity();
-        return activity != null && activity.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED;
+        return hasBluetoothPermission(Manifest.permission.BLUETOOTH_CONNECT);
+    }
+
+    private boolean hasBluetoothScanPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            return true;
+        }
+
+        return hasBluetoothPermission(Manifest.permission.BLUETOOTH_SCAN);
     }
 
     private boolean ensureBluetoothConnectPermission(CallbackContext callbackContext) {
@@ -159,6 +171,35 @@ public class DatecsSDKWrapper {
 
         callbackContext.error(this.getBluetoothPermissionDeniedError());
         return false;
+    }
+
+    private boolean ensureBluetoothConnectionPermissions(CallbackContext callbackContext) {
+        if (hasBluetoothConnectPermission() && hasBluetoothScanPermission()) {
+            return true;
+        }
+
+        callbackContext.error(this.getBluetoothPermissionDeniedError());
+        return false;
+    }
+
+    private boolean cancelDiscoverySafely(BluetoothAdapter adapter, CallbackContext callbackContext) {
+        if (adapter == null) {
+            return false;
+        }
+
+        if (!hasBluetoothScanPermission()) {
+            callbackContext.error(this.getBluetoothPermissionDeniedError());
+            return false;
+        }
+
+        try {
+            adapter.cancelDiscovery();
+            return true;
+        } catch (SecurityException exception) {
+            Log.e(LOG_TAG, "Bluetooth permission denied while cancelling discovery", exception);
+            callbackContext.error(this.getBluetoothPermissionDeniedError());
+            return false;
+        }
     }
 
     /**
@@ -255,7 +296,7 @@ public class DatecsSDKWrapper {
      * @param callbackContext
      */
     protected void connect(CallbackContext callbackContext) {
-        if (!ensureBluetoothConnectPermission(callbackContext)) {
+        if (!ensureBluetoothConnectionPermissions(callbackContext)) {
             return;
         }
 
@@ -315,13 +356,22 @@ public class DatecsSDKWrapper {
             @Override
             public void run() {
                 BluetoothAdapter adapter = BluetoothAdapter.getDefaultAdapter();
-                BluetoothDevice device = adapter.getRemoteDevice(address);
                 UUID uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
                 InputStream in = null;
                 OutputStream out = null;
-                adapter.cancelDiscovery();
+                BluetoothDevice device;
+
+                if (adapter == null) {
+                    callbackContext.error(sdk.getErrorByCode(1));
+                    return;
+                }
 
                 try {
+                    device = adapter.getRemoteDevice(address);
+                    if (!cancelDiscoverySafely(adapter, callbackContext)) {
+                        return;
+                    }
+
                     mBluetoothSocket = createBluetoothSocket(device, uuid, callbackContext);
                     Thread.sleep(50);
                     mBluetoothSocket.connect();
@@ -335,11 +385,19 @@ public class DatecsSDKWrapper {
                         mBluetoothSocket.connect();
                         in = mBluetoothSocket.getInputStream();
                         out = mBluetoothSocket.getOutputStream();
+                    } catch (SecurityException ex) {
+                        Log.e(LOG_TAG, "Bluetooth permission denied while connecting", ex);
+                        callbackContext.error(sdk.getBluetoothPermissionDeniedError());
+                        return;
                     } catch (Exception ex) {
                         ex.printStackTrace();
                         callbackContext.error(sdk.getErrorByCode(18, ex));
                         return;
                     }
+                } catch (SecurityException e) {
+                    Log.e(LOG_TAG, "Bluetooth permission denied while connecting", e);
+                    callbackContext.error(sdk.getBluetoothPermissionDeniedError());
+                    return;
                 } catch (Exception e) {
                     e.printStackTrace();
                     callbackContext.error(sdk.getErrorByCode(18, e));
