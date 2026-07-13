@@ -12,7 +12,7 @@ import android.content.pm.PackageManager;
 import android.os.Build;
 
 public class DatecsPrinter extends CordovaPlugin {
-	private static final int REQUEST_BLUETOOTH_CONNECT_PERMISSION = 1001;
+	private static final int REQUEST_BLUETOOTH_PERMISSIONS = 1001;
 	private DatecsSDKWrapper printer;
 	private Option pendingPermissionOption;
 	private CallbackContext pendingPermissionCallbackContext;
@@ -168,20 +168,50 @@ public class DatecsPrinter extends CordovaPlugin {
 		return true;
 	}
 
+	private String[] getBluetoothPermissions(Option option) {
+		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+			return new String[0];
+		}
+
+		switch (option) {
+			case connect:
+				return new String[] {
+					Manifest.permission.BLUETOOTH_CONNECT,
+					Manifest.permission.BLUETOOTH_SCAN
+				};
+			case listBluetoothDevices:
+			default:
+				return new String[] {
+					Manifest.permission.BLUETOOTH_CONNECT
+				};
+		}
+	}
+
+	private boolean hasBluetoothPermissions(String[] permissions) {
+		for (String permission : permissions) {
+			if (!cordova.hasPermission(permission)) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
 	private boolean ensureBluetoothPermission(Option option, CallbackContext callbackContext) {
-		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || cordova.hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) {
+		String[] permissions = getBluetoothPermissions(option);
+		if (permissions.length == 0 || hasBluetoothPermissions(permissions)) {
 			return true;
 		}
 
 		pendingPermissionOption = option;
 		pendingPermissionCallbackContext = callbackContext;
-		cordova.requestPermission(this, REQUEST_BLUETOOTH_CONNECT_PERMISSION, Manifest.permission.BLUETOOTH_CONNECT);
+		cordova.requestPermissions(this, REQUEST_BLUETOOTH_PERMISSIONS, permissions);
 		return false;
 	}
 
 	@Override
 	public void onRequestPermissionResult(int requestCode, String[] permissions, int[] grantResults) throws JSONException {
-		if (requestCode != REQUEST_BLUETOOTH_CONNECT_PERMISSION) {
+		if (requestCode != REQUEST_BLUETOOTH_PERMISSIONS) {
 			super.onRequestPermissionResult(requestCode, permissions, grantResults);
 			return;
 		}
@@ -191,7 +221,10 @@ public class DatecsPrinter extends CordovaPlugin {
 		pendingPermissionCallbackContext = null;
 		pendingPermissionOption = null;
 
-		boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+		boolean granted = grantResults.length == permissions.length;
+		for (int grantResult : grantResults) {
+			granted = granted && grantResult == PackageManager.PERMISSION_GRANTED;
+		}
 		if (!granted) {
 			if (callbackContext != null) {
 				callbackContext.error(printer.getBluetoothPermissionDeniedError());
@@ -200,6 +233,11 @@ public class DatecsPrinter extends CordovaPlugin {
 		}
 
 		if (callbackContext == null || option == null) {
+			return;
+		}
+
+		if (!hasBluetoothPermissions(getBluetoothPermissions(option))) {
+			callbackContext.error(printer.getBluetoothPermissionDeniedError());
 			return;
 		}
 

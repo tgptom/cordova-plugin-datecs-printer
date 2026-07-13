@@ -22,6 +22,10 @@ _(every function accept at least two parameters, and they're the last ones: onSu
 - **printBarcode(barcodeType, barcodeData):** this will print a barcode accordingly to the given type and data (you can find the barcode types code [here](#barcode-types-code))
 - **printQRCode(size, eccLv, data):** this will print the QRCode accordingly to the given size (allowed values 1, 4, 6, 8, 10, 12, 14), error collection control level (allowed values 1 (L 7%), 2 (M 15%), 3 (Q 25%), 4 (H 30%) and data.
 
+### Android 12+ Nearby Devices permissions
+
+On Android 12 (API 31) and newer, `listBluetoothDevices()` requests `BLUETOOTH_CONNECT`, and `connect(address)` requests both `BLUETOOTH_CONNECT` and `BLUETOOTH_SCAN` as Nearby Devices runtime permissions. The plugin uses `BLUETOOTH_SCAN` only to safely cancel Bluetooth discovery before connecting to an already paired printer, and declares it with `neverForLocation`. If either permission is denied, the plugin returns the existing Bluetooth permission error through the callback instead of crashing the app.
+
 ### Reported Working Printer Models
 
 These models were reported as working as expected:
