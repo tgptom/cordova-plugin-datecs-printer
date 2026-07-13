@@ -44,8 +44,14 @@
         <source-file src="src/android/res/values-pt/strings.xml" target-dir="res/values-pt"/>
         <source-file src="src/android/res/values-fr/strings.xml" target-dir="res/values-fr"/>
         <source-file src="src/android/res/values-ar/strings.xml" target-dir="res/values-ar"/>
+        <source-file src="src/android/res/values-b+zh+Hans/strings.xml" target-dir="res/values-b+zh+Hans"/>
+        <source-file src="src/android/res/values-b+zh+Hant/strings.xml" target-dir="res/values-b+zh+Hant"/>
+        <source-file src="src/android/res/values-zh-rCN/strings.xml" target-dir="res/values-zh-rCN"/>
+        <source-file src="src/android/res/values-zh-rSG/strings.xml" target-dir="res/values-zh-rSG"/>
+        <source-file src="src/android/res/values-zh-rMY/strings.xml" target-dir="res/values-zh-rMY"/>
         <source-file src="src/android/res/values-zh-rTW/strings.xml" target-dir="res/values-zh-rTW"/>
         <source-file src="src/android/res/values-zh-rHK/strings.xml" target-dir="res/values-zh-rHK"/>
+        <source-file src="src/android/res/values-zh-rMO/strings.xml" target-dir="res/values-zh-rMO"/>
         <source-file src="src/android/res/values/strings.xml" target-dir="res/values"/>
     </platform>
 </plugin>

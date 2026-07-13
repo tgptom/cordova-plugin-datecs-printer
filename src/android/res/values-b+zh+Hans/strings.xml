@@ -1,0 +1,31 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+  <string name="connecting">连接中...</string>
+  <string name="err_disconnect_printer">断开打印机连接时出错</string>
+  <string name="err_fetch_st">获取状态时出错</string>
+  <string name="err_fetch_tmp">获取温度时出错</string>
+  <string name="err_lines_number">行数必须在 0 到 255 之间</string>
+  <string name="err_no_bt_adapter">蓝牙适配器不可用</string>
+  <string name="err_no_bt_device">未找到蓝牙设备</string>
+  <string name="err_feed_paper">打印机送纸时出错</string>
+  <string name="err_print">打印时出错</string>
+  <string name="err_print_barcode">打印条码时出错</string>
+  <string name="err_print_img">打印图片时出错</string>
+  <string name="err_print_rect">打印矩形时出错</string>
+  <string name="err_print_test">打印测试页时出错</string>
+  <string name="err_set_barcode">设置条码选项时出错</string>
+  <string name="err_bt_socket">无法创建蓝牙套接字</string>
+  <string name="err_write">无法将这些字节写入此打印机</string>
+  <string name="failed_to_connect">连接失败：</string>
+  <string name="failed_to_comm">创建通信失败</string>
+  <string name="failed_to_initialize">初始化失败：</string>
+  <string name="low_battery">电量不足</string>
+  <string name="no_paper">缺纸</string>
+  <string name="overheating">过热</string>
+  <string name="paper_ok">纸张正常</string>
+  <string name="printer">打印机</string>
+  <string name="printer_connected">打印机已连接</string>
+  <string name="printer_disconnected">打印机连接已断开</string>
+  <string name="err_print_qrcode">打印二维码时出错</string>
+  <string name="err_bt_connect_permission">蓝牙权限被拒绝</string>
+</resources>
