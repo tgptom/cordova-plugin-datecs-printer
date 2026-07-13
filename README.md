@@ -26,6 +26,8 @@ _(every function accept at least two parameters, and they're the last ones: onSu
 
 On Android 12 (API 31) and newer, `listBluetoothDevices()` requests `BLUETOOTH_CONNECT`, and `connect(address)` requests both `BLUETOOTH_CONNECT` and `BLUETOOTH_SCAN` as Nearby Devices runtime permissions. The plugin uses `BLUETOOTH_SCAN` only to safely cancel Bluetooth discovery before connecting to an already paired printer, and declares it with `neverForLocation`. If either permission is denied, the plugin returns the existing Bluetooth permission error through the callback instead of crashing the app.
 
+Plugin status/error messages also include Traditional Chinese Android locale resources for Taiwan (`zh-TW`) and Hong Kong (`zh-HK`).
+
 ### Reported Working Printer Models
 
 These models were reported as working as expected:

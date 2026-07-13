@@ -44,6 +44,8 @@
         <source-file src="src/android/res/values-pt/strings.xml" target-dir="res/values-pt"/>
         <source-file src="src/android/res/values-fr/strings.xml" target-dir="res/values-fr"/>
         <source-file src="src/android/res/values-ar/strings.xml" target-dir="res/values-ar"/>
+        <source-file src="src/android/res/values-zh-rTW/strings.xml" target-dir="res/values-zh-rTW"/>
+        <source-file src="src/android/res/values-zh-rHK/strings.xml" target-dir="res/values-zh-rHK"/>
         <source-file src="src/android/res/values/strings.xml" target-dir="res/values"/>
     </platform>
 </plugin>
