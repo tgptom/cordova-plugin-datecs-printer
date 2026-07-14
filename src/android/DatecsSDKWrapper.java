@@ -56,7 +56,6 @@ public class DatecsSDKWrapper {
     private boolean mRestart;
     private String mAddress;
     private CallbackContext mConnectCallbackContext;
-    private CallbackContext mCallbackContext;
     private ProgressDialog mDialog;
     private CordovaInterface mCordova;
     private CordovaWebView mWebView;
@@ -243,8 +242,17 @@ public class DatecsSDKWrapper {
                 return;
             }
             if (!mBluetoothAdapter.isEnabled()) {
-                Intent enableBluetooth = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
-                this.mCordova.getActivity().startActivityForResult(enableBluetooth, 0);
+                // Must start the enable-Bluetooth activity from the UI thread
+                mCordova.getActivity().runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        Intent enableBluetooth = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+                        mCordova.getActivity().startActivityForResult(enableBluetooth, 0);
+                    }
+                });
+                // Bluetooth is not yet enabled; the caller must retry once it is
+                callbackContext.error(this.getErrorByCode(1));
+                return;
             }
             Set<BluetoothDevice> pairedDevices = mBluetoothAdapter.getBondedDevices();
             if (pairedDevices.size() > 0) {
@@ -297,15 +305,6 @@ public class DatecsSDKWrapper {
     // public void setCordova(CordovaInterface cordova) {
     //     mCordova = cordova;
     // }
-
-    /**
-     * CallbackContext de cada requisição, que efetivamente recebe os retornos dos métodos
-     *
-     * @param callbackContext
-     */
-    public void setCallbackContext(CallbackContext callbackContext) {
-        mCallbackContext = callbackContext;
-    }
 
     /**
      * Valida o endereço da impressora e efetua a conexão
@@ -681,18 +680,19 @@ public class DatecsSDKWrapper {
      * Alimenta papel à impressora (rola papel em branco)
      *
      * @param linesQuantity
+     * @param callbackContext
      */
-    public void feedPaper(int linesQuantity) {
+    public void feedPaper(int linesQuantity, CallbackContext callbackContext) {
         if (linesQuantity < 0 || linesQuantity > 255) {
-            mCallbackContext.error(this.getErrorByCode(3));
+            callbackContext.error(this.getErrorByCode(3));
         }
         try {
             mPrinter.feedPaper(linesQuantity);
             mPrinter.flush();
-            mCallbackContext.success();
+            callbackContext.success();
         } catch (Exception e) {
             e.printStackTrace();
-            mCallbackContext.error(this.getErrorByCode(4, e));
+            callbackContext.error(this.getErrorByCode(4, e));
         }
     }
 
@@ -700,9 +700,10 @@ public class DatecsSDKWrapper {
      * Print text expecting markup formatting tags (default encoding is ISO-8859-1)
      *
      * @param text
+     * @param callbackContext
      */
-    public void printTaggedText(String text) {
-        printTaggedText(text, "ISO-8859-1");
+    public void printTaggedText(String text, CallbackContext callbackContext) {
+        printTaggedText(text, "ISO-8859-1", callbackContext);
     }
 
     /**
@@ -710,77 +711,84 @@ public class DatecsSDKWrapper {
      *
      * @param text
      * @param charset
+     * @param callbackContext
      */
-    public void printTaggedText(String text, String charset) {
+    public void printTaggedText(String text, String charset, CallbackContext callbackContext) {
         try {
             mPrinter.printTaggedText(text, charset);
             mPrinter.flush();
-            mCallbackContext.success();
+            callbackContext.success();
         } catch (Exception e) {
             e.printStackTrace();
             Log.e(LOG_TAG, e.getMessage());
-            mCallbackContext.error(this.getErrorByCode(5, e));
+            callbackContext.error(this.getErrorByCode(5, e));
         }
     }
 
     /**
      * Converts HEX String into byte array and write
      *
-     * @param String
+     * @param s
+     * @param callbackContext
      */
-    public void writeHex(String s) {
-        write(DatecsUtil.hexStringToByteArray(s));
+    public void writeHex(String s, CallbackContext callbackContext) {
+        write(DatecsUtil.hexStringToByteArray(s), callbackContext);
     }
 
     /**
      * Writes all bytes from the specified byte array to this printer
      *
-     * @param byte[]
+     * @param b
+     * @param callbackContext
      */
-    public void write(byte[] b) {
+    public void write(byte[] b, CallbackContext callbackContext) {
         try {
             mPrinter.write(b);
             mPrinter.flush();
-            mCallbackContext.success();
+            callbackContext.success();
         } catch (Exception e) {
             e.printStackTrace();
-            mCallbackContext.error(this.getErrorByCode(21, e));
+            callbackContext.error(this.getErrorByCode(21, e));
         }
     }
 
     /**
      * Return what is the Printer current status
+     *
+     * @param callbackContext
      */
-    public void getStatus() {
+    public void getStatus(CallbackContext callbackContext) {
         try {
             int status = mPrinter.getStatus();
-            mCallbackContext.success(status);
+            callbackContext.success(status);
         } catch (Exception e) {
             e.printStackTrace();
-            mCallbackContext.error(this.getErrorByCode(6, e));
+            callbackContext.error(this.getErrorByCode(6, e));
         }
     }
 
     /**
      * Return Printer's head temperature
+     *
+     * @param callbackContext
      */
-    public void getTemperature() {
+    public void getTemperature(CallbackContext callbackContext) {
         try {
             int temperature = mPrinter.getTemperature();
-            mCallbackContext.success(temperature);
+            callbackContext.success(temperature);
         } catch (Exception e) {
             e.printStackTrace();
-            mCallbackContext.error(this.getErrorByCode(7, e));
+            callbackContext.error(this.getErrorByCode(7, e));
         }
     }
 
-    public void setBarcode(int align, boolean small, int scale, int hri, int height) {
+    public void setBarcode(int align, boolean small, int scale, int hri, int height, CallbackContext callbackContext) {
         try {
             mPrinter.setBarcode(align, small, scale, hri, height);
-            mCallbackContext.success();
+            callbackContext.success();
         } catch (Exception e) {
             e.printStackTrace();
-            mCallbackContext.error(this.getErrorByCode(10, e));
+            callbackContext.error(this.getErrorByCode(10, e));
         }
     }
 
@@ -789,15 +797,16 @@ public class DatecsSDKWrapper {
      *
      * @param type
      * @param data
+     * @param callbackContext
      */
-    public void printBarcode(int type, String data) {
+    public void printBarcode(int type, String data, CallbackContext callbackContext) {
         try {
             mPrinter.printBarcode(type, data);
             mPrinter.flush();
-            mCallbackContext.success();
+            callbackContext.success();
         } catch (Exception e) {
             e.printStackTrace();
-            mCallbackContext.error(this.getErrorByCode(8, e));
+            callbackContext.error(this.getErrorByCode(8, e));
         }
     }
 
@@ -807,91 +816,94 @@ public class DatecsSDKWrapper {
      * @param size - the size of symbol, value in {1, 4, 6, 8, 10, 12, 14}
      * @param eccLv - the error collection control level, where 1: L (7%), 2: M (15%), 3: Q (25%), 4: H (30%)
      * @param data - the QRCode data. The data must be between 1 and 448 symbols long.
+     * @param callbackContext
      */
-    public void printQRCode(int size, int eccLv, String data) {
+    public void printQRCode(int size, int eccLv, String data, CallbackContext callbackContext) {
         try {
             mPrinter.printQRCode(size, eccLv, data);
             mPrinter.flush();
-            mCallbackContext.success();
+            callbackContext.success();
         } catch (Exception e) {
             e.printStackTrace();
-            mCallbackContext.error(this.getErrorByCode(22, e));
+            callbackContext.error(this.getErrorByCode(22, e));
         }
     }
 
 
     /**
      * Print a selftest page
+     *
+     * @param callbackContext
      */
-    public void printSelfTest() {
+    public void printSelfTest(CallbackContext callbackContext) {
         try {
             mPrinter.printSelfTest();
             mPrinter.flush();
-            mCallbackContext.success();
+            callbackContext.success();
         } catch (Exception e) {
             e.printStackTrace();
-            mCallbackContext.error(this.getErrorByCode(9, e));
+            callbackContext.error(this.getErrorByCode(9, e));
         }
     }
 
-    public void drawPageRectangle(int x, int y, int width, int height, int fillMode) {
+    public void drawPageRectangle(int x, int y, int width, int height, int fillMode, CallbackContext callbackContext) {
         try {
             mPrinter.drawPageRectangle(x, y, width, height, fillMode);
-            mCallbackContext.success();
+            callbackContext.success();
         } catch (Exception e) {
             e.printStackTrace();
-            mCallbackContext.error(this.getErrorByCode(12, e));
+            callbackContext.error(this.getErrorByCode(12, e));
         }
     }
 
-    public void drawPageFrame(int x, int y, int width, int height, int fillMode, int thickness) {
+    public void drawPageFrame(int x, int y, int width, int height, int fillMode, int thickness, CallbackContext callbackContext) {
         try {
             mPrinter.drawPageFrame(x, y, width, height, fillMode, thickness);
-            mCallbackContext.success();
+            callbackContext.success();
         } catch (Exception e) {
             e.printStackTrace();
-            mCallbackContext.error(this.getErrorByCode(16, e));
+            callbackContext.error(this.getErrorByCode(16, e));
         }
     }
 
-    public void selectStandardMode() {
+    public void selectStandardMode(CallbackContext callbackContext) {
         try {
             mPrinter.selectStandardMode();
-            mCallbackContext.success();
+            callbackContext.success();
         } catch (Exception e) {
             e.printStackTrace();
-            mCallbackContext.error(this.getErrorByCode(13, e));
+            callbackContext.error(this.getErrorByCode(13, e));
         }
     }
 
-    public void selectPageMode() {
+    public void selectPageMode(CallbackContext callbackContext) {
         try {
             mPrinter.selectPageMode();
-            mCallbackContext.success();
+            callbackContext.success();
         } catch (Exception e) {
             e.printStackTrace();
-            mCallbackContext.error(this.getErrorByCode(14, e));
+            callbackContext.error(this.getErrorByCode(14, e));
         }
     }
 
-    public void printPage() {
+    public void printPage(CallbackContext callbackContext) {
         try {
             mPrinter.printPage();
             mPrinter.flush();
-            mCallbackContext.success();
+            callbackContext.success();
         } catch (Exception e) {
             e.printStackTrace();
-            mCallbackContext.error(this.getErrorByCode(17, e));
+            callbackContext.error(this.getErrorByCode(17, e));
         }
     }
 
-    public void setPageRegion(int x, int y, int width, int height, int direction) {
+    public void setPageRegion(int x, int y, int width, int height, int direction, CallbackContext callbackContext) {
         try {
             mPrinter.setPageRegion(x, y, width, height, direction);
-            mCallbackContext.success();
+            callbackContext.success();
         } catch (Exception e) {
             e.printStackTrace();
-            mCallbackContext.error(this.getErrorByCode(15, e));
+            callbackContext.error(this.getErrorByCode(15, e));
         }
     }
 
@@ -903,8 +915,9 @@ public class DatecsSDKWrapper {
      * @param width
      * @param height
      * @param align
+     * @param callbackContext
      */
-    public void printImage(String image, int width, int height, int align) {
+    public void printImage(String image, int width, int height, int align, CallbackContext callbackContext) {
         try {
             BitmapFactory.Options options = new BitmapFactory.Options();
             options.inScaled = false;
@@ -919,10 +932,10 @@ public class DatecsSDKWrapper {
 
             mPrinter.printImage(argb, width, height, align, true);
             mPrinter.flush();
-            mCallbackContext.success();
+            callbackContext.success();
         } catch (Exception e) {
             e.printStackTrace();
-            mCallbackContext.error(this.getErrorByCode(11, e));
+            callbackContext.error(this.getErrorByCode(11, e));
         }
     }
 
@@ -934,11 +947,10 @@ public class DatecsSDKWrapper {
      * @param jobName
      */
     private void runJob(final Runnable job, final String jobTitle, final String jobName) {
-        // Start the job from main thread
+        // Show progress dialog on the UI thread, then execute the job on Cordova's thread pool
         mCordova.getActivity().runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                // Progress dialog available due job execution
                 final ProgressDialog dialog = new ProgressDialog(mCordova.getActivity());
                 dialog.setTitle(jobTitle);
                 dialog.setMessage(jobName);
@@ -946,7 +958,7 @@ public class DatecsSDKWrapper {
                 dialog.setCanceledOnTouchOutside(false);
                 dialog.show();
 
-                Thread t = new Thread(new Runnable() {
+                mCordova.getThreadPool().execute(new Runnable() {
                     @Override
                     public void run() {
                         try {
@@ -956,7 +968,6 @@ public class DatecsSDKWrapper {
                         }
                     }
                 });
-                t.start();
             }
         });
     }

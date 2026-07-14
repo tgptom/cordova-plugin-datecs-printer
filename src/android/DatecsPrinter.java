@@ -10,12 +10,23 @@ import org.json.JSONException;
 import android.Manifest;
 import android.content.pm.PackageManager;
 import android.os.Build;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class DatecsPrinter extends CordovaPlugin {
 	private static final int REQUEST_BLUETOOTH_PERMISSIONS = 1001;
 	private DatecsSDKWrapper printer;
 	private Option pendingPermissionOption;
 	private CallbackContext pendingPermissionCallbackContext;
+	/**
+	 * Single-thread executor that serializes all printer operations on one background thread.
+	 * Serialization is required because:
+	 *   1. Printer commands must be delivered in order.
+	 *   2. The SDK's printer/socket state is shared across calls.
+	 *   3. Using a pool would allow concurrent access that could corrupt state or
+	 *      deliver results to the wrong JavaScript callback.
+	 */
+	private ExecutorService printerExecutor;
 
 	private enum Option {
 		listBluetoothDevices,
@@ -45,11 +56,20 @@ public class DatecsPrinter extends CordovaPlugin {
 		super.initialize(cordova, webView);
 		printer = new DatecsSDKWrapper(cordova);
 		printer.setWebView(webView);
+		printerExecutor = Executors.newSingleThreadExecutor();
+	}
+
+	@Override
+	public void onDestroy() {
+		printerExecutor.shutdown();
+		super.onDestroy();
 	}
 
 	@Override
 	public boolean execute(String action, JSONArray args, CallbackContext callbackContext) throws JSONException {
-		printer.setCallbackContext(callbackContext);
+		// callbackContext is passed directly to each operation below; the former
+		// shared printer.setCallbackContext() has been removed to prevent races where
+		// a later call could overwrite the context before an earlier call reports back.
 
 		Option option = null;
 		try {
@@ -59,111 +79,258 @@ public class DatecsPrinter extends CordovaPlugin {
 		}
 		switch (option) {
 			case listBluetoothDevices:
+				// Permission check is fast (non-blocking) and must remain on this thread
 				if (ensureBluetoothPermission(option, callbackContext)) {
-					printer.getBluetoothPairedDevices(callbackContext);
+					final CallbackContext ctx = callbackContext;
+					printerExecutor.execute(new Runnable() {
+						@Override
+						public void run() {
+							printer.getBluetoothPairedDevices(ctx);
+						}
+					});
 				}
 				break;
-			case connect:
-				printer.setAddress(args.getString(0));
+			case connect: {
+				final String address = args.getString(0);
+				// Store address immediately so it is available after permission grant
+				printer.setAddress(address);
 				if (ensureBluetoothPermission(option, callbackContext)) {
-					printer.connect(callbackContext);
+					final CallbackContext ctx = callbackContext;
+					printerExecutor.execute(new Runnable() {
+						@Override
+						public void run() {
+							printer.connect(ctx);
+						}
+					});
 				}
 				break;
-			case disconnect:
-				try {
-					printer.closeActiveConnections();
-					callbackContext.success(DatecsUtil.getStringFromStringResource(this.cordova.getActivity().getApplication(), "printer_disconnected"));
-				} catch (Exception e) {
-					callbackContext.success(DatecsUtil.getStringFromStringResource(this.cordova.getActivity().getApplication(), "err_disconnect_printer"));
-				}
+			}
+			case disconnect: {
+				final CallbackContext ctx = callbackContext;
+				printerExecutor.execute(new Runnable() {
+					@Override
+					public void run() {
+						try {
+							printer.closeActiveConnections();
+							ctx.success(DatecsUtil.getStringFromStringResource(
+									DatecsPrinter.this.cordova.getActivity().getApplication(),
+									"printer_disconnected"));
+						} catch (Exception e) {
+							ctx.success(DatecsUtil.getStringFromStringResource(
+									DatecsPrinter.this.cordova.getActivity().getApplication(),
+									"err_disconnect_printer"));
+						}
+					}
+				});
 				break;
-			case feedPaper:
-				printer.feedPaper(args.getInt(0));
+			}
+			case feedPaper: {
+				final int lines = args.getInt(0);
+				final CallbackContext ctx = callbackContext;
+				printerExecutor.execute(new Runnable() {
+					@Override
+					public void run() {
+						printer.feedPaper(lines, ctx);
+					}
+				});
 				break;
-			case printText:
-				String text = args.getString(0);
-				String charset = args.getString(1);
-				printer.printTaggedText(text, charset);
+			}
+			case printText: {
+				final String text = args.getString(0);
+				final String charset = args.getString(1);
+				final CallbackContext ctx = callbackContext;
+				printerExecutor.execute(new Runnable() {
+					@Override
+					public void run() {
+						printer.printTaggedText(text, charset, ctx);
+					}
+				});
 				break;
-			case getStatus:
-				printer.getStatus();
+			}
+			case getStatus: {
+				final CallbackContext ctx = callbackContext;
+				printerExecutor.execute(new Runnable() {
+					@Override
+					public void run() {
+						printer.getStatus(ctx);
+					}
+				});
 				break;
-			case getTemperature:
-				printer.getTemperature();
+			}
+			case getTemperature: {
+				final CallbackContext ctx = callbackContext;
+				printerExecutor.execute(new Runnable() {
+					@Override
+					public void run() {
+						printer.getTemperature(ctx);
+					}
+				});
 				break;
-			case setBarcode:
-				int align = args.getInt(0);
-				boolean small = args.getBoolean(1);
-				int scale = args.getInt(2);
-				int hri = args.getInt(3);
-				int height = args.getInt(4);
-				printer.setBarcode(align, small, scale, hri, height);
+			}
+			case setBarcode: {
+				final int align = args.getInt(0);
+				final boolean small = args.getBoolean(1);
+				final int scale = args.getInt(2);
+				final int hri = args.getInt(3);
+				final int height = args.getInt(4);
+				final CallbackContext ctx = callbackContext;
+				printerExecutor.execute(new Runnable() {
+					@Override
+					public void run() {
+						printer.setBarcode(align, small, scale, hri, height, ctx);
+					}
+				});
 				break;
-			case printBarcode:
-				int type = args.getInt(0);
-				String data = args.getString(1);
-				printer.printBarcode(type, data);
+			}
+			case printBarcode: {
+				final int type = args.getInt(0);
+				final String data = args.getString(1);
+				final CallbackContext ctx = callbackContext;
+				printerExecutor.execute(new Runnable() {
+					@Override
+					public void run() {
+						printer.printBarcode(type, data, ctx);
+					}
+				});
 				break;
-			case printQRCode:
-				int size = args.getInt(0);
-				int eccLv = args.getInt(1);
-				data = args.getString(2);
-				printer.printQRCode(size, eccLv, data);
+			}
+			case printQRCode: {
+				final int size = args.getInt(0);
+				final int eccLv = args.getInt(1);
+				final String data = args.getString(2);
+				final CallbackContext ctx = callbackContext;
+				printerExecutor.execute(new Runnable() {
+					@Override
+					public void run() {
+						printer.printQRCode(size, eccLv, data, ctx);
+					}
+				});
 				break;
-			case printImage:
-				String image = args.getString(0);
-				int imgWidth = args.getInt(1);
-				int imgHeight = args.getInt(2);
-				int imgAlign = args.getInt(3);
-				printer.printImage(image, imgWidth, imgHeight, imgAlign);
+			}
+			case printImage: {
+				final String image = args.getString(0);
+				final int imgWidth = args.getInt(1);
+				final int imgHeight = args.getInt(2);
+				final int imgAlign = args.getInt(3);
+				final CallbackContext ctx = callbackContext;
+				printerExecutor.execute(new Runnable() {
+					@Override
+					public void run() {
+						printer.printImage(image, imgWidth, imgHeight, imgAlign, ctx);
+					}
+				});
 				break;
+			}
 			case printLogo:
 				break;
-			case printSelfTest:
-				printer.printSelfTest();
+			case printSelfTest: {
+				final CallbackContext ctx = callbackContext;
+				printerExecutor.execute(new Runnable() {
+					@Override
+					public void run() {
+						printer.printSelfTest(ctx);
+					}
+				});
 				break;
-			case drawPageRectangle:
-			  int x = args.getInt(0);
-			  int y = args.getInt(1);
-			  int width = args.getInt(2);
-			  height = args.getInt(3);
-			  int fillMode = args.getInt(4);
-			  printer.drawPageRectangle(x, y, width, height, fillMode);
-			  break;
-			case selectPageMode:
-			  printer.selectPageMode();
-			  break;
-			case selectStandardMode:
-			  printer.selectStandardMode();
-			  break;
-			case setPageRegion:
-			  x = args.getInt(0);
-			  y = args.getInt(1);
-			  width = args.getInt(2);
-			  height = args.getInt(3);
-			  int direction = args.getInt(4);
-			  printer.setPageRegion(x, y, width, height, direction);
-			  break;
-			case drawPageFrame:
-			  x = args.getInt(0);
-			  y = args.getInt(1);
-			  width = args.getInt(2);
-			  height = args.getInt(3);
-			  fillMode = args.getInt(4);
-			  int thickness = args.getInt(5);
-			  printer.drawPageFrame(x, y, width, height, fillMode, thickness);
-			  break;
-			case printPage:
-			  printer.printPage();
-			  break;
-			case write:
-				byte[] bytes = args.getString(0).getBytes();
-			  printer.write(bytes);
-			  break;
-			case writeHex:
-				String hex = args.getString(0);
-			  printer.writeHex(hex);
-			  break;
+			}
+			case drawPageRectangle: {
+				final int x = args.getInt(0);
+				final int y = args.getInt(1);
+				final int width = args.getInt(2);
+				final int height = args.getInt(3);
+				final int fillMode = args.getInt(4);
+				final CallbackContext ctx = callbackContext;
+				printerExecutor.execute(new Runnable() {
+					@Override
+					public void run() {
+						printer.drawPageRectangle(x, y, width, height, fillMode, ctx);
+					}
+				});
+				break;
+			}
+			case selectPageMode: {
+				final CallbackContext ctx = callbackContext;
+				printerExecutor.execute(new Runnable() {
+					@Override
+					public void run() {
+						printer.selectPageMode(ctx);
+					}
+				});
+				break;
+			}
+			case selectStandardMode: {
+				final CallbackContext ctx = callbackContext;
+				printerExecutor.execute(new Runnable() {
+					@Override
+					public void run() {
+						printer.selectStandardMode(ctx);
+					}
+				});
+				break;
+			}
+			case setPageRegion: {
+				final int x = args.getInt(0);
+				final int y = args.getInt(1);
+				final int width = args.getInt(2);
+				final int height = args.getInt(3);
+				final int direction = args.getInt(4);
+				final CallbackContext ctx = callbackContext;
+				printerExecutor.execute(new Runnable() {
+					@Override
+					public void run() {
+						printer.setPageRegion(x, y, width, height, direction, ctx);
+					}
+				});
+				break;
+			}
+			case drawPageFrame: {
+				final int x = args.getInt(0);
+				final int y = args.getInt(1);
+				final int width = args.getInt(2);
+				final int height = args.getInt(3);
+				final int fillMode = args.getInt(4);
+				final int thickness = args.getInt(5);
+				final CallbackContext ctx = callbackContext;
+				printerExecutor.execute(new Runnable() {
+					@Override
+					public void run() {
+						printer.drawPageFrame(x, y, width, height, fillMode, thickness, ctx);
+					}
+				});
+				break;
+			}
+			case printPage: {
+				final CallbackContext ctx = callbackContext;
+				printerExecutor.execute(new Runnable() {
+					@Override
+					public void run() {
+						printer.printPage(ctx);
+					}
+				});
+				break;
+			}
+			case write: {
+				final byte[] bytes = args.getString(0).getBytes();
+				final CallbackContext ctx = callbackContext;
+				printerExecutor.execute(new Runnable() {
+					@Override
+					public void run() {
+						printer.write(bytes, ctx);
+					}
+				});
+				break;
+			}
+			case writeHex: {
+				final String hex = args.getString(0);
+				final CallbackContext ctx = callbackContext;
+				printerExecutor.execute(new Runnable() {
+					@Override
+					public void run() {
+						printer.writeHex(hex, ctx);
+					}
+				});
+				break;
+			}
 		}
 		return true;
 	}
@@ -216,8 +383,8 @@ public class DatecsPrinter extends CordovaPlugin {
 			return;
 		}
 
-		CallbackContext callbackContext = pendingPermissionCallbackContext;
-		Option option = pendingPermissionOption;
+		final CallbackContext callbackContext = pendingPermissionCallbackContext;
+		final Option option = pendingPermissionOption;
 		pendingPermissionCallbackContext = null;
 		pendingPermissionOption = null;
 
@@ -241,12 +408,23 @@ public class DatecsPrinter extends CordovaPlugin {
 			return;
 		}
 
+		// Dispatch the deferred operation to the printer executor now that permission is granted
 		switch (option) {
 			case listBluetoothDevices:
-				printer.getBluetoothPairedDevices(callbackContext);
+				printerExecutor.execute(new Runnable() {
+					@Override
+					public void run() {
+						printer.getBluetoothPairedDevices(callbackContext);
+					}
+				});
 				break;
 			case connect:
-				printer.connect(callbackContext);
+				printerExecutor.execute(new Runnable() {
+					@Override
+					public void run() {
+						printer.connect(callbackContext);
+					}
+				});
 				break;
 			default:
 				break;
